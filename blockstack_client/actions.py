@@ -2812,3 +2812,62 @@ def cli_advanced_stop_server( args, config_path=CONFIG_PATH, interactive=False )
 
     return {'status': True}
 
+
+def cli_advanced_sign_profile( args, config_path=CONFIG_PATH, proxy=None, password=None, interactive=False ):
+    """
+    command: sign_profile norpc
+    help: Sign a JSON file to be used as a profile.
+    arg: path (str) "The path to the profile data on disk."
+    opt: privkey (str) "The optional private key to sign it with (defaults to the data private key in your wallet)"
+    """
+
+    if proxy is None:
+        proxy = get_default_proxy(config_path=config_path)
+    
+    config_dir = os.path.dirname(config_path)
+    path = str(args.path)
+    data_json = None
+    try:
+        with open(path, 'r') as f:
+            dat = f.read()
+            data_json = json.loads(dat)
+    except Exception as e:
+        if os.environ.get("BLOCKSTACK_DEBUG") == "1":
+            log.exception(e)
+
+        log.error("Failed to load {}".format(path))
+        return {'error': 'Failed to load {}'.format(path)}
+
+    privkey = None
+    if hasattr(args, "privkey") and args.privkey:
+        privkey = str(args.privkey)
+
+    else:
+        res = wallet_ensure_exists(config_dir, password=password)
+        if 'error' in res:
+            return res
+
+        res = start_rpc_endpoint(config_dir, password=password)
+        if 'error' in res:
+            return res
+
+        wallet_keys = get_wallet_keys( config_path, password )
+        if 'error' in wallet_keys:
+            return wallet_keys
+
+        if not wallet_keys.has_key('data_privkey'):
+            log.error("No data private key in the wallet.  You may need to explicitly select a private key.")
+            return {'error': 'No data private key set.\nTry passing your owner private key.'}
+
+        privkey = wallet_keys['data_privkey']
+
+    res = storage.serialize_mutable_data( data_json, privkey )
+    if res is None:
+        return {'error': 'Failed to serialize data'}
+
+    # sanity check 
+    rc = storage.parse_mutable_data( res, virtualchain.BitcoinPrivateKey(privkey).public_key().to_hex() )
+    assert rc
+
+    return json.loads(res)
+
